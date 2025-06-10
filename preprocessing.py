@@ -15,49 +15,59 @@ def preprocess_data(df, show=True):
         st.write("Contoh data sebelum diganti:")
         st.dataframe(df[df.isin(['?']).any(axis=1)].head())
 
+    # Ganti '?' dengan NaN
     df.replace('?', np.nan, inplace=True)
 
-    if show:
-        st.write("Contoh data setelah diganti:")
-        df_nan = df[df.isnull().any(axis=1)].copy()
-        st.dataframe(df_nan.head())
-    else:
-        df_nan = df[df.isnull().any(axis=1)].copy()
-
+    # Identifikasi kolom numerik dan kategorikal
     num_cols = ['Age', 'Height', 'Weight', 'FCVC', 'NCP', 'CH2O', 'FAF', 'TUE']
+    
+    # Konversi kolom numerik ke tipe numerik. 'errors='coerce' akan mengubah nilai non-numerik menjadi NaN
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # --- Tambahan: Hapus baris yang mungkin jadi NaN setelah pd.to_numeric ---
+    # Ini penting jika ada data kotor selain '?' yang berubah jadi NaN setelah konversi
+    df.dropna(subset=num_cols, inplace=True) # Hapus baris di mana kolom numerik menjadi NaN
 
     if show:
+        st.write("Contoh data setelah '?' diganti NaN dan konversi numerik:")
+        # Tampilkan beberapa baris pertama setelah konversi dan dropna untuk inspeksi
+        st.dataframe(df.head())
+
         st.markdown("### 🔍 Missing Values Sebelum Imputasi")
         st.dataframe(df.isnull().sum()[df.isnull().sum() > 0])
 
+    # Kategorikan kolom setelah konversi numerik
     cat_cols = df.select_dtypes(include='object').columns.tolist()
     if show:
         st.markdown("### 🛠️ Imputasi Missing Values")
         st.markdown("#### Kategori → diisi pakai modus.")
         st.markdown("#### Numerik → diisi pakai median.")
 
+    # Imputasi missing values untuk kolom kategorikal (modus)
     for col in cat_cols:
         if df[col].isnull().sum() > 0:
-            df[col] = SimpleImputer(strategy='most_frequent').fit_transform(df[[col]]).ravel()
+            imputer = SimpleImputer(strategy='most_frequent')
+            df[col] = imputer.fit_transform(df[[col]]).ravel()
             if show:
                 st.write(f"📁 Kolom kategori '{col}' diimputasi dengan modus.")
 
-    for col in num_cols:
+    # Imputasi missing values untuk kolom numerik (median)
+    for col in num_cols: # Pastikan ini tetap dilakukan jika ada NaN dari sumber lain (misal, dari categorical setelah di-encode)
         if df[col].isnull().sum() > 0:
-            df[col] = SimpleImputer(strategy='median').fit_transform(df[[col]])
+            imputer = SimpleImputer(strategy='median')
+            df[col] = imputer.fit_transform(df[[col]])
             if show:
                 st.write(f"📊 Kolom numerik '{col}' diimputasi dengan median.")
 
     if show:
         st.markdown("### ✅ Contoh Data Setelah Imputasi")
-        df_after_impute = df.loc[df_nan.index]
-        st.dataframe(df_after_impute.head())
+        st.dataframe(df.head())
 
         st.markdown("### 🔍 Missing Values Setelah Imputasi")
         st.dataframe(df.isnull().sum())
 
+    # Hapus duplikat
     before_dup = len(df)
     df.drop_duplicates(inplace=True)
     after_dup = len(df)
@@ -67,6 +77,7 @@ def preprocess_data(df, show=True):
         st.write(f"Jumlah data setelah hapus duplikat: {after_dup}")
         st.write(f"Jumlah data duplikat yang dihapus: {before_dup - after_dup}")
 
+    # Deteksi dan penanganan outlier (menggunakan IQR)
     if show:
         st.markdown("### 🚨 Visualisasi Outlier Sebelum dan Sesudah")
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -90,13 +101,16 @@ def preprocess_data(df, show=True):
             axes[i].set_title(f"{col} (Sesudah)")
         st.pyplot(fig)
 
+    # Encoding fitur kategorikal
     if show:
         st.markdown("### 🔄 Encoding Fitur Kategorikal")
 
-    cat_cols = df.select_dtypes(include='object').columns.tolist()
-    cat_cols.remove('NObeyesdad')
+    cat_cols_after_impute = df.select_dtypes(include='object').columns.tolist()
+    if 'NObeyesdad' in cat_cols_after_impute:
+        cat_cols_after_impute.remove('NObeyesdad')
+    
     label_encoders = {}
-    for col in cat_cols:
+    for col in cat_cols_after_impute:
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col])
         label_encoders[col] = le
@@ -114,6 +128,7 @@ def preprocess_data(df, show=True):
     y = df['NObeyesdad']
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    X = pd.DataFrame(X_scaled, columns=X.columns)
 
     if show:
         st.markdown("### 🔥 Korelasi antar Fitur")
@@ -132,16 +147,18 @@ def preprocess_data(df, show=True):
             st.write("Sebelum SMOTE")
             fig = plt.figure(figsize=(5, 4))
             sns.countplot(x=y)
+            plt.title("Distribusi Kelas Sebelum SMOTE")
             st.pyplot(fig)
 
     smote = SMOTE(random_state=42)
-    X_resampled, y_resampled = smote.fit_resample(X_scaled, y)
+    X_resampled, y_resampled = smote.fit_resample(X, y)
 
     if show:
         with col2:
             st.write("Setelah SMOTE")
             fig = plt.figure(figsize=(5, 4))
             sns.countplot(x=y_resampled)
+            plt.title("Distribusi Kelas Setelah SMOTE")
             st.pyplot(fig)
 
     X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
