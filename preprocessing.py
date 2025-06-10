@@ -30,9 +30,8 @@ def preprocess_data(df, show=True):
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # --- Tambahan: Hapus baris yang mungkin jadi NaN setelah pd.to_numeric ---
-    # Ini penting jika ada data kotor selain '?' yang berubah jadi NaN setelah konversi
     initial_rows_after_q_replace = len(df)
-    df.dropna(subset=num_cols, inplace=True) # Hapus baris di mana kolom numerik menjadi NaN
+    df.dropna(subset=num_cols, inplace=True) 
     if show and len(df) < initial_rows_after_q_replace:
         st.write(f"Dihapus {initial_rows_after_q_replace - len(df)} baris karena NaN pada kolom numerik setelah konversi.")
 
@@ -162,8 +161,7 @@ def preprocess_data(df, show=True):
                 X[col].replace([np.inf, -np.inf], np.nan, inplace=True)
                 imputer_final_X = SimpleImputer(strategy='median')
                 X[col] = imputer_final_X.fit_transform(X[[col]]).ravel()
-        # Jika ada kolom non-numerik yang entah bagaimana lolos, ini akan menghentikannya
-        elif not pd.api.types.is_numeric_dtype(X[col]):
+        elif not pd.api.types.is_numeric_dtype(X[col]): # Check if any non-numeric remains
             if show:
                 st.error(f"❌ ERROR: Kolom '{col}' di X bukan tipe numerik setelah semua preprocessing.")
             raise TypeError(f"Kolom '{col}' di X bukan tipe numerik.")
@@ -176,8 +174,7 @@ def preprocess_data(df, show=True):
         imputer_final_y = SimpleImputer(strategy='most_frequent')
         y = imputer_final_y.fit_transform(y.to_frame()).ravel()
         y = pd.Series(y, name='NObeyesdad') 
-    # Jika y bukan numerik
-    elif not pd.api.types.is_numeric_dtype(y):
+    elif not pd.api.types.is_numeric_dtype(y): # Check if y is non-numeric
         if show:
             st.error("❌ ERROR: Target y bukan tipe numerik setelah semua preprocessing.")
         raise TypeError("Target y bukan tipe numerik.")
@@ -211,9 +208,44 @@ def preprocess_data(df, show=True):
 
     # Standard Scaling
     scaler = StandardScaler()
-    X_processed = pd.DataFrame(scaler.fit_transform(X_final), columns=X_final.columns) # Gunakan X_final
-    
-    # --- END OF CRITICAL FINAL DATA VALIDATION AND TYPE CONVERSION ---
+    X_scaled = scaler.fit_transform(X_final) 
+    X_processed = pd.DataFrame(X_scaled, columns=X_final.columns)
+
+    # --- START OF NEW CRITICAL FINAL CONVERSION TO NUMPY ARRAYS FOR SMOTE ---
+    if show:
+        st.markdown("### 🔍 Final Konversi ke NumPy Array untuk SMOTE")
+
+    # Konversi X_processed ke numpy array float64
+    try:
+        X_smote = X_processed.to_numpy(dtype=np.float64, copy=True)
+    except Exception as e:
+        if show:
+            st.error(f"❌ ERROR: Gagal mengkonversi X_processed ke numpy.ndarray (float64) untuk SMOTE. Detail: {e}")
+            st.write("X_processed dtypes:", X_processed.dtypes)
+            st.write("X_processed nulls:", X_processed.isnull().sum().sum())
+            st.write("X_processed infs:", X_processed.isin([np.inf, -np.inf]).sum().sum())
+        raise ValueError(f"Final conversion of X for SMOTE failed: {e}")
+
+    # Konversi y_final ke numpy array int64
+    try:
+        y_smote = y_final.to_numpy(dtype=np.int64, copy=True)
+    except Exception as e:
+        if show:
+            st.error(f"❌ ERROR: Gagal mengkonversi y_final ke numpy.ndarray (int64) untuk SMOTE. Detail: {e}")
+            st.write("y_final dtype:", y_final.dtype)
+            st.write("y_final nulls:", y_final.isnull().sum())
+            st.write("y_final infs:", y_final.isin([np.inf, -np.inf]).sum())
+        raise ValueError(f"Final conversion of y for SMOTE failed: {e}")
+
+    # Final check just before SMOTE:
+    if np.any(np.isnan(X_smote)) or np.any(np.isinf(X_smote)):
+        if show: st.error("❌ FATAL ERROR: NaN atau Inf ditemukan di X_smote tepat sebelum SMOTE.")
+        raise ValueError("NaNs or Infs found in X_smote immediately before SMOTE.")
+    if np.any(np.isnan(y_smote)) or np.any(np.isinf(y_smote)):
+        if show: st.error("❌ FATAL ERROR: NaN atau Inf ditemukan di y_smote tepat sebelum SMOTE.")
+        raise ValueError("NaNs or Infs found in y_smote immediately before SMOTE.")
+
+    # --- END OF NEW CRITICAL FINAL CONVERSION TO NUMPY ARRAYS ---
 
 
     if show:
@@ -241,8 +273,7 @@ def preprocess_data(df, show=True):
             st.pyplot(fig)
 
     smote = SMOTE(random_state=42)
-    # Gunakan X_processed dan y_final yang sudah divalidasi dan discale
-    X_resampled, y_resampled = smote.fit_resample(X_processed, y_final)
+    X_resampled, y_resampled = smote.fit_resample(X_smote, y_smote)
 
     if show:
         with col2:
