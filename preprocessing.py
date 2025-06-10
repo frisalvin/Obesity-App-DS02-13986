@@ -27,7 +27,8 @@ def preprocess_data(df, show=True):
     
     # --- Tambahan: Hapus baris yang mungkin jadi NaN setelah pd.to_numeric ---
     # Ini penting jika ada data kotor selain '?' yang berubah jadi NaN setelah konversi
-    df.dropna(subset=num_cols, inplace=True) # Hapus baris di mana kolom numerik menjadi NaN
+    # Hapus baris di mana kolom numerik menjadi NaN
+    df.dropna(subset=num_cols, inplace=True) 
 
     if show:
         st.write("Contoh data setelah '?' diganti NaN dan konversi numerik:")
@@ -126,19 +127,95 @@ def preprocess_data(df, show=True):
 
     X = df.drop('NObeyesdad', axis=1)
     y = df['NObeyesdad']
+
+    # --- START OF ADDED/MODIFIED CODE FOR ROBUSTNESS ---
+    # Pemeriksaan dan penanganan nilai tak terhingga (inf) di X
+    if show:
+        st.markdown("### 🧹 Penanganan Nilai Tak Terhingga (Infinity)")
+    
+    # Ganti inf/-inf dengan NaN di X, lalu imputasi dengan median jika ada
+    for col in X.columns:
+        if pd.api.types.is_numeric_dtype(X[col]):
+            if (X[col] == np.inf).any() or (X[col] == -np.inf).any():
+                X[col].replace([np.inf, -np.inf], np.nan, inplace=True)
+                if show:
+                    st.write(f"⚠️ Nilai 'inf' atau '-inf' ditemukan dan diganti dengan NaN di kolom '{col}'.")
+                
+                # Imputasi NaN yang baru dibuat dari nilai inf
+                if X[col].isnull().any():
+                    imputer_inf = SimpleImputer(strategy='median')
+                    X[col] = imputer_inf.fit_transform(X[[col]]).ravel()
+                    if show:
+                        st.write(f"🔧 NaN yang dihasilkan dari 'inf' di kolom '{col}' diimputasi dengan median.")
+    
+    # Pemeriksaan dan penanganan nilai tak terhingga (inf) di y (target)
+    if pd.api.types.is_numeric_dtype(y):
+        if (y == np.inf).any() or (y == -np.inf).any():
+            y.replace([np.inf, -np.inf], np.nan, inplace=True)
+            if show:
+                st.write(f"⚠️ Nilai 'inf' atau '-inf' ditemukan dan diganti dengan NaN di target 'NObeyesdad'.")
+            
+            # Imputasi NaN yang baru dibuat dari nilai inf
+            if y.isnull().any():
+                imputer_inf = SimpleImputer(strategy='median')
+                y = imputer_inf.fit_transform(y.to_frame()).ravel()
+                if show:
+                    st.write(f"🔧 NaN yang dihasilkan dari 'inf' di target diimputasi dengan median.")
+
+    # FINAL CHECK for NaN or non-numeric before scaling (optional but good for debugging)
+    if show:
+        st.markdown("### 🚨 Final Check: NaN dan Tipe Data Sebelum Scaling & SMOTE")
+        st.write("Jumlah NaN di X sebelum scaling:")
+        st.dataframe(X.isnull().sum()[X.isnull().sum() > 0])
+        st.write("Tipe data X sebelum scaling:")
+        st.dataframe(X.dtypes)
+        st.write("Jumlah NaN di y sebelum scaling:")
+        st.write(y.isnull().sum())
+        st.write("Tipe data y sebelum scaling:")
+        st.write(y.dtype)
+
+        # Assertion for critical check
+        if X.isnull().sum().sum() > 0:
+            st.error("❌ ERROR: NaN masih ditemukan di X sebelum scaling. Harap periksa langkah preprocessing.")
+            raise ValueError("NaNs detected in X before scaling.")
+        if y.isnull().sum() > 0:
+            st.error("❌ ERROR: NaN masih ditemukan di y sebelum scaling. Harap periksa langkah preprocessing.")
+            raise ValueError("NaNs detected in y before scaling.")
+        if not all(pd.api.types.is_numeric_dtype(X[col]) for col in X.columns):
+            st.error("❌ ERROR: Kolom non-numerik ditemukan di X sebelum scaling. Harap periksa langkah encoding.")
+            raise ValueError("Non-numeric columns detected in X before scaling.")
+        if not pd.api.types.is_numeric_dtype(y):
+            st.error("❌ ERROR: Target y bukan numerik sebelum scaling. Harap periksa langkah encoding.")
+            raise ValueError("Non-numeric target y detected before scaling.")
+
+    # Standard Scaling
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     X = pd.DataFrame(X_scaled, columns=X.columns)
 
+    # --- END OF ADDED/MODIFIED CODE FOR ROBUSTNESS ---
+
     if show:
         st.markdown("### 🔥 Korelasi antar Fitur")
+        # Pastikan df yang digunakan untuk korelasi sudah bersih dan numerik
+        # Jika df masih mengandung kolom 'object' atau NaN, ini bisa error
+        # Gunakan X yang sudah discale untuk korelasi, atau pastikan df bersih
+        df_for_corr = df.copy()
+        for col, encoder in label_encoders.items():
+            df_for_corr[col] = encoder.inverse_transform(df_for_corr[col])
+        df_for_corr['NObeyesdad'] = target_encoder.inverse_transform(df_for_corr['NObeyesdad'])
+        
+        # Korelasi hanya pada kolom numerik
+        numeric_df_for_corr = df_for_corr.select_dtypes(include=[np.number])
+        
         fig = plt.figure(figsize=(16, 12))
-        sns.heatmap(df.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8})
+        sns.heatmap(numeric_df_for_corr.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8})
         plt.title("Heatmap Korelasi antar Fitur", fontsize=16)
         plt.xticks(rotation=45, ha='right', fontsize=10)
         plt.yticks(rotation=0, fontsize=10)
         plt.tight_layout()
         st.pyplot(fig)
+
 
     if show:
         st.markdown("### 📊 Distribusi Kelas Sebelum dan Sesudah SMOTE")
