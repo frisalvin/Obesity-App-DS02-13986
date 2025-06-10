@@ -53,7 +53,7 @@ def preprocess_data(df, show=True):
                 st.write(f"📁 Kolom kategori '{col}' diimputasi dengan modus.")
 
     # Imputasi missing values untuk kolom numerik (median)
-    for col in num_cols: # Pastikan ini tetap dilakukan jika ada NaN dari sumber lain (misal, dari categorical setelah di-encode)
+    for col in num_cols:
         if df[col].isnull().sum() > 0:
             imputer = SimpleImputer(strategy='median')
             df[col] = imputer.fit_transform(df[[col]])
@@ -86,8 +86,6 @@ def preprocess_data(df, show=True):
             axes[i].set_title(f"{col} (Sebelum)")
         st.pyplot(fig)
 
-    # Catatan: Penanganan outlier akan mengurangi jumlah baris data.
-    # Pastikan data yang tersisa cukup untuk pelatihan.
     initial_rows_after_impute_dup = len(df)
     for col in ['Age', 'Height', 'Weight']:
         Q1 = df[col].quantile(0.25)
@@ -98,7 +96,6 @@ def preprocess_data(df, show=True):
         df = df[(df[col] >= lower) & (df[col] <= upper)]
     if show:
         st.write(f"Jumlah baris setelah penanganan outlier: {len(df)} (Dihapus: {initial_rows_after_impute_dup - len(df)})")
-
 
     if show:
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -133,68 +130,67 @@ def preprocess_data(df, show=True):
     X = df.drop('NObeyesdad', axis=1)
     y = df['NObeyesdad']
 
-    # --- START OF CRITICAL ADDITIONS FOR ROBUSTNESS ---
-    # Convert X to numpy array and ensure numeric type for robustness
-    # This explicitly handles potential issues with pandas types vs. imblearn's internal checks
+    # --- START OF MODIFIED/ADDITIONS FOR ROBUSTNESS ---
     if show:
         st.markdown("### 🚧 Final Data Validation Before Scaling and SMOTE 🚧")
 
-    X_np = X.to_numpy(dtype=np.float64, na_value=np.nan)
-    y_np = y.to_numpy(dtype=np.int64, na_value=np.nan) # Target is usually int after LabelEncoder
-
-    # Check for NaNs after converting to numpy array
-    if np.any(np.isnan(X_np)):
-        if show:
-            st.error("❌ ERROR: NaN ditemukan di X setelah konversi ke numpy array. Lakukan imputasi tambahan jika perlu.")
-            # st.dataframe(pd.DataFrame(X_np).isnull().sum()[pd.DataFrame(X_np).isnull().sum() > 0])
-        raise ValueError("NaNs detected in X after converting to numpy array.")
+    # Pastikan X dan y bebas dari NaN dan inf sebelum konversi ke NumPy array
+    # Imputasi NaN/inf di X sebelum konversi
+    for col in X.columns:
+        if pd.api.types.is_numeric_dtype(X[col]):
+            if (X[col].isnull().any() or X[col].isin([np.inf, -np.inf]).any()):
+                if show:
+                    st.write(f"🔧 Mengatasi NaN/inf di kolom X '{col}' sebelum konversi ke NumPy array.")
+                X[col].replace([np.inf, -np.inf], np.nan, inplace=True)
+                # Gunakan median untuk numerik
+                X[col] = X[col].fillna(X[col].median())
     
-    if np.any(np.isnan(y_np)):
-        if show:
-            st.error("❌ ERROR: NaN ditemukan di y (target) setelah konversi ke numpy array.")
-        raise ValueError("NaNs detected in y after converting to numpy array.")
+    # Imputasi NaN/inf di y sebelum konversi
+    if pd.api.types.is_numeric_dtype(y):
+        if (y.isnull().any() or y.isin([np.inf, -np.inf]).any()):
+            if show:
+                st.write("🔧 Mengatasi NaN/inf di target y sebelum konversi ke NumPy array.")
+            y.replace([np.inf, -np.inf], np.nan, inplace=True)
+            # Untuk target, modus mungkin lebih aman karena ini adalah label kategorikal yang sudah di-encode
+            y = y.fillna(y.mode()[0])
 
-    # Check for infinite values in X_np
-    if np.any(np.isinf(X_np)):
-        if show:
-            st.error("❌ ERROR: Nilai tak terhingga (inf) ditemukan di X setelah konversi ke numpy array. Mengganti dengan NaN dan mengimputasi.")
-        # Replace inf with NaN and then impute
-        X_np[np.isinf(X_np)] = np.nan
-        imputer_inf_X = SimpleImputer(strategy='median')
-        X_np = imputer_inf_X.fit_transform(X_np)
-        if show:
-            st.write("Nilai 'inf' di X berhasil diganti NaN dan diimputasi dengan median.")
+    # Konversi X ke numpy array (float64 adalah default yang aman untuk fitur numerik)
+    X_np = X.to_numpy(dtype=np.float64) 
+    
+    # Konversi y ke numpy array. Pastikan sudah bersih dari NaN/inf karena dtype=np.int64 tidak bisa ada NaN.
+    y_np = y.to_numpy(dtype=np.int64) 
 
-    # Check for infinite values in y_np
-    if np.any(np.isinf(y_np)):
+    # Final Check for NaNs/Infs (should ideally not happen here if previous steps are correct)
+    if np.any(np.isnan(X_np)) or np.any(np.isinf(X_np)):
         if show:
-            st.error("❌ ERROR: Nilai tak terhingga (inf) ditemukan di y (target) setelah konversi ke numpy array. Mengganti dengan NaN dan mengimputasi.")
-        # Replace inf with NaN and then impute
-        y_np[np.isinf(y_np)] = np.nan
-        # For target, mode might be safer or just drop if very few
-        if np.any(np.isnan(y_np)): # Only impute if NaNs were created
-            imputer_inf_y = SimpleImputer(strategy='most_frequent') # Use most_frequent for target
-            y_np = imputer_inf_y.fit_transform(y_np.reshape(-1, 1)).ravel()
-        if show:
-            st.write("Nilai 'inf' di y berhasil diganti NaN dan diimputasi dengan modus.")
+            st.error("❌ ERROR FATAL: NaN atau inf masih terdeteksi di X_np setelah penanganan! Periksa logika.")
+            st.dataframe(pd.DataFrame(X_np).isnull().sum()[pd.DataFrame(X_np).isnull().sum() > 0])
+            st.dataframe(pd.DataFrame(X_np).isin([np.inf, -np.inf]).sum())
+        raise ValueError("Critical NaNs or infinite values still present in X_np before scaling.")
 
-    # Ensure X is DataFrame again after all checks, with original column names
+    if np.any(np.isnan(y_np)) or np.any(np.isinf(y_np)):
+        if show:
+            st.error("❌ ERROR FATAL: NaN atau inf masih terdeteksi di y_np setelah penanganan! Periksa logika.")
+            st.write(np.isnan(y_np).sum())
+            st.write(np.isinf(y_np).sum())
+        raise ValueError("Critical NaNs or infinite values still present in y_np before scaling.")
+
+    # Konversi kembali ke DataFrame/Series untuk Standard Scaler
     X = pd.DataFrame(X_np, columns=X.columns)
-    y = pd.Series(y_np, name='NObeyesdad') # Convert back to Series for consistency
+    y = pd.Series(y_np, name='NObeyesdad')
 
     # Standard Scaling
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     X = pd.DataFrame(X_scaled, columns=X.columns) # X after scaling
 
-    # --- END OF CRITICAL ADDITIONS FOR ROBUSTNESS ---
+    # --- END OF MODIFIED/ADDITIONS FOR ROBUSTNESS ---
 
     if show:
         st.markdown("### 🔥 Korelasi antar Fitur")
         # Pastikan df yang digunakan untuk korelasi sudah bersih dan numerik
-        # Gunakan X yang sudah discale dan y (target yang sudah di-encode) untuk korelasi yang benar
         df_for_corr_viz = X.copy()
-        df_for_corr_viz['NObeyesdad'] = y # Gabungkan kembali X dan y untuk visualisasi korelasi
+        df_for_corr_viz['NObeyesdad'] = y 
         
         fig = plt.figure(figsize=(16, 12))
         sns.heatmap(df_for_corr_viz.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8})
@@ -211,7 +207,7 @@ def preprocess_data(df, show=True):
         with col1:
             st.write("Sebelum SMOTE")
             fig = plt.figure(figsize=(5, 4))
-            sns.countplot(x=y) # Menggunakan y yang sudah bersih
+            sns.countplot(x=y) 
             plt.title("Distribusi Kelas Sebelum SMOTE")
             st.pyplot(fig)
 
