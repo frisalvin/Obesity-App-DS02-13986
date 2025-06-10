@@ -13,7 +13,11 @@ def preprocess_data(df, show=True):
         st.subheader("🧹 Pre-processing Data")
         st.markdown("### 🔄 Mengganti '?' dengan NaN")
         st.write("Contoh data sebelum diganti:")
-        st.dataframe(df[df.isin(['?']).any(axis=1)].head())
+        # Tampilkan hanya jika ada '?'
+        if df.isin(['?']).any(axis=1).any():
+            st.dataframe(df[df.isin(['?']).any(axis=1)].head())
+        else:
+            st.info("Tidak ada nilai '?' yang ditemukan di data.")
 
     # Ganti '?' dengan NaN
     df.replace('?', np.nan, inplace=True)
@@ -27,15 +31,24 @@ def preprocess_data(df, show=True):
     
     # --- Tambahan: Hapus baris yang mungkin jadi NaN setelah pd.to_numeric ---
     # Ini penting jika ada data kotor selain '?' yang berubah jadi NaN setelah konversi
+    initial_rows_after_q_replace = len(df)
     df.dropna(subset=num_cols, inplace=True) # Hapus baris di mana kolom numerik menjadi NaN
+    if show and len(df) < initial_rows_after_q_replace:
+        st.write(f"Dihapus {initial_rows_after_q_replace - len(df)} baris karena NaN pada kolom numerik setelah konversi.")
+
 
     if show:
         st.write("Contoh data setelah '?' diganti NaN dan konversi numerik:")
-        # Tampilkan beberapa baris pertama setelah konversi dan dropna untuk inspeksi
         st.dataframe(df.head())
 
         st.markdown("### 🔍 Missing Values Sebelum Imputasi")
-        st.dataframe(df.isnull().sum()[df.isnull().sum() > 0])
+        missing_before_impute = df.isnull().sum()
+        missing_before_impute = missing_before_impute[missing_before_impute > 0]
+        if not missing_before_impute.empty:
+            st.dataframe(missing_before_impute)
+        else:
+            st.info("Tidak ada missing values sebelum imputasi.")
+
 
     # Kategorikan kolom setelah konversi numerik
     cat_cols = df.select_dtypes(include='object').columns.tolist()
@@ -65,7 +78,13 @@ def preprocess_data(df, show=True):
         st.dataframe(df.head())
 
         st.markdown("### 🔍 Missing Values Setelah Imputasi")
-        st.dataframe(df.isnull().sum())
+        missing_after_impute = df.isnull().sum()
+        missing_after_impute = missing_after_impute[missing_after_impute > 0]
+        if not missing_after_impute.empty:
+            st.dataframe(missing_after_impute)
+        else:
+            st.info("Tidak ada missing values setelah imputasi.")
+
 
     # Hapus duplikat
     before_dup = len(df)
@@ -130,67 +149,77 @@ def preprocess_data(df, show=True):
     X = df.drop('NObeyesdad', axis=1)
     y = df['NObeyesdad']
 
-    # --- START OF MODIFIED/ADDITIONS FOR ROBUSTNESS ---
+    # --- START OF CRITICAL FINAL DATA VALIDATION AND TYPE CONVERSION ---
     if show:
-        st.markdown("### 🚧 Final Data Validation Before Scaling and SMOTE 🚧")
+        st.markdown("### 🚧 Validasi Data Akhir Sebelum Scaling & SMOTE 🚧")
 
-    # Pastikan X dan y bebas dari NaN dan inf sebelum konversi ke NumPy array
-    # Imputasi NaN/inf di X sebelum konversi
+    # 1. Pastikan X bebas dari NaN dan inf
     for col in X.columns:
         if pd.api.types.is_numeric_dtype(X[col]):
-            if (X[col].isnull().any() or X[col].isin([np.inf, -np.inf]).any()):
+            if X[col].isnull().any() or X[col].isin([np.inf, -np.inf]).any():
                 if show:
-                    st.write(f"🔧 Mengatasi NaN/inf di kolom X '{col}' sebelum konversi ke NumPy array.")
+                    st.warning(f"⚠️ NaN atau inf ditemukan di kolom X '{col}'. Mengimputasi kembali.")
                 X[col].replace([np.inf, -np.inf], np.nan, inplace=True)
-                # Gunakan median untuk numerik
-                X[col] = X[col].fillna(X[col].median())
-    
-    # Imputasi NaN/inf di y sebelum konversi
-    if pd.api.types.is_numeric_dtype(y):
-        if (y.isnull().any() or y.isin([np.inf, -np.inf]).any()):
+                imputer_final_X = SimpleImputer(strategy='median')
+                X[col] = imputer_final_X.fit_transform(X[[col]]).ravel()
+        # Jika ada kolom non-numerik yang entah bagaimana lolos, ini akan menghentikannya
+        elif not pd.api.types.is_numeric_dtype(X[col]):
             if show:
-                st.write("🔧 Mengatasi NaN/inf di target y sebelum konversi ke NumPy array.")
-            y.replace([np.inf, -np.inf], np.nan, inplace=True)
-            # Untuk target, modus mungkin lebih aman karena ini adalah label kategorikal yang sudah di-encode
-            y = y.fillna(y.mode()[0])
+                st.error(f"❌ ERROR: Kolom '{col}' di X bukan tipe numerik setelah semua preprocessing.")
+            raise TypeError(f"Kolom '{col}' di X bukan tipe numerik.")
 
-    # Konversi X ke numpy array (float64 adalah default yang aman untuk fitur numerik)
-    X_np = X.to_numpy(dtype=np.float64) 
-    
-    # Konversi y ke numpy array. Pastikan sudah bersih dari NaN/inf karena dtype=np.int64 tidak bisa ada NaN.
-    y_np = y.to_numpy(dtype=np.int64) 
-
-    # Final Check for NaNs/Infs (should ideally not happen here if previous steps are correct)
-    if np.any(np.isnan(X_np)) or np.any(np.isinf(X_np)):
+    # 2. Pastikan y bebas dari NaN dan inf
+    if y.isnull().any() or y.isin([np.inf, -np.inf]).any():
         if show:
-            st.error("❌ ERROR FATAL: NaN atau inf masih terdeteksi di X_np setelah penanganan! Periksa logika.")
-            st.dataframe(pd.DataFrame(X_np).isnull().sum()[pd.DataFrame(X_np).isnull().sum() > 0])
-            st.dataframe(pd.DataFrame(X_np).isin([np.inf, -np.inf]).sum())
-        raise ValueError("Critical NaNs or infinite values still present in X_np before scaling.")
-
-    if np.any(np.isnan(y_np)) or np.any(np.isinf(y_np)):
+            st.warning("⚠️ NaN atau inf ditemukan di target y. Mengimputasi kembali.")
+        y.replace([np.inf, -np.inf], np.nan, inplace=True)
+        imputer_final_y = SimpleImputer(strategy='most_frequent')
+        y = imputer_final_y.fit_transform(y.to_frame()).ravel()
+        y = pd.Series(y, name='NObeyesdad') 
+    # Jika y bukan numerik
+    elif not pd.api.types.is_numeric_dtype(y):
         if show:
-            st.error("❌ ERROR FATAL: NaN atau inf masih terdeteksi di y_np setelah penanganan! Periksa logika.")
-            st.write(np.isnan(y_np).sum())
-            st.write(np.isinf(y_np).sum())
-        raise ValueError("Critical NaNs or infinite values still present in y_np before scaling.")
+            st.error("❌ ERROR: Target y bukan tipe numerik setelah semua preprocessing.")
+        raise TypeError("Target y bukan tipe numerik.")
 
-    # Konversi kembali ke DataFrame/Series untuk Standard Scaler
-    X = pd.DataFrame(X_np, columns=X.columns)
-    y = pd.Series(y_np, name='NObeyesdad')
+    # Konversi X dan y ke tipe data final yang non-nullable
+    try:
+        X_final = X.astype(np.float64) 
+        y_final = y.astype(np.int64)   
+    except Exception as e:
+        if show:
+            st.error(f"❌ ERROR: Gagal mengkonversi X atau y ke tipe data final (float64/int64). Detail: {e}")
+            st.write("X dtypes sebelum konversi final:", X.dtypes)
+            st.write("y dtype sebelum konversi final:", y.dtype)
+            st.write("X nulls sebelum konversi final:", X.isnull().sum().sum())
+            st.write("y nulls sebelum konversi final:", y.isnull().sum())
+        raise ValueError(f"Final type conversion failed: {e}")
+
+    # Final check sebelum scaling dan SMOTE
+    if X_final.isnull().sum().sum() > 0:
+        if show: st.error("❌ FATAL ERROR: NaN ditemukan di X_final sebelum scaling.")
+        raise ValueError("NaNs found in X_final before scaling.")
+    if y_final.isnull().sum() > 0:
+        if show: st.error("❌ FATAL ERROR: NaN ditemukan di y_final sebelum scaling.")
+        raise ValueError("NaNs found in y_final before scaling.")
+    if not all(pd.api.types.is_numeric_dtype(X_final[col]) for col in X_final.columns):
+        if show: st.error("❌ FATAL ERROR: Kolom non-numerik ditemukan di X_final sebelum scaling.")
+        raise ValueError("Non-numeric columns found in X_final before scaling.")
+    if not pd.api.types.is_numeric_dtype(y_final):
+        if show: st.error("❌ FATAL ERROR: Target y_final bukan numerik sebelum scaling.")
+        raise ValueError("Non-numeric target y_final found before scaling.")
 
     # Standard Scaling
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X = pd.DataFrame(X_scaled, columns=X.columns) # X after scaling
+    X_processed = pd.DataFrame(scaler.fit_transform(X_final), columns=X_final.columns) # Gunakan X_final
+    
+    # --- END OF CRITICAL FINAL DATA VALIDATION AND TYPE CONVERSION ---
 
-    # --- END OF MODIFIED/ADDITIONS FOR ROBUSTNESS ---
 
     if show:
         st.markdown("### 🔥 Korelasi antar Fitur")
-        # Pastikan df yang digunakan untuk korelasi sudah bersih dan numerik
-        df_for_corr_viz = X.copy()
-        df_for_corr_viz['NObeyesdad'] = y 
+        df_for_corr_viz = X_processed.copy()
+        df_for_corr_viz['NObeyesdad'] = y_final 
         
         fig = plt.figure(figsize=(16, 12))
         sns.heatmap(df_for_corr_viz.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8})
@@ -207,13 +236,13 @@ def preprocess_data(df, show=True):
         with col1:
             st.write("Sebelum SMOTE")
             fig = plt.figure(figsize=(5, 4))
-            sns.countplot(x=y) 
+            sns.countplot(x=y_final) 
             plt.title("Distribusi Kelas Sebelum SMOTE")
             st.pyplot(fig)
 
     smote = SMOTE(random_state=42)
-    # Gunakan X dan y yang sudah divalidasi dan discale
-    X_resampled, y_resampled = smote.fit_resample(X, y)
+    # Gunakan X_processed dan y_final yang sudah divalidasi dan discale
+    X_resampled, y_resampled = smote.fit_resample(X_processed, y_final)
 
     if show:
         with col2:
