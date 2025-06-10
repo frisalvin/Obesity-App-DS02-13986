@@ -98,11 +98,11 @@ def preprocess_data(df, show=True):
     # Deteksi dan penanganan outlier (menggunakan IQR)
     if show:
         st.markdown("### 🚨 Visualisasi Outlier Sebelum dan Sesudah")
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig_before, axes_before = plt.subplots(1, 3, figsize=(15, 5))
         for i, col in enumerate(['Age', 'Height', 'Weight']):
-            sns.boxplot(y=df[col], ax=axes[i])
-            axes[i].set_title(f"{col} (Sebelum)")
-        st.pyplot(fig)
+            sns.boxplot(y=df[col], ax=axes_before[i])
+            axes_before[i].set_title(f"{col} (Sebelum)")
+        st.pyplot(fig_before)
 
     initial_rows_after_impute_dup = len(df)
     for col in ['Age', 'Height', 'Weight']:
@@ -116,11 +116,11 @@ def preprocess_data(df, show=True):
         st.write(f"Jumlah baris setelah penanganan outlier: {len(df)} (Dihapus: {initial_rows_after_impute_dup - len(df)})")
 
     if show:
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig_after, axes_after = plt.subplots(1, 3, figsize=(15, 5))
         for i, col in enumerate(['Age', 'Height', 'Weight']):
-            sns.boxplot(y=df[col], ax=axes[i])
-            axes[i].set_title(f"{col} (Sesudah)")
-        st.pyplot(fig)
+            sns.boxplot(y=df[col], ax=axes_after[i])
+            axes_after[i].set_title(f"{col} (Sesudah)")
+        st.pyplot(fig_after)
 
     # Encoding fitur kategorikal
     if show:
@@ -161,7 +161,7 @@ def preprocess_data(df, show=True):
                 X[col].replace([np.inf, -np.inf], np.nan, inplace=True)
                 imputer_final_X = SimpleImputer(strategy='median')
                 X[col] = imputer_final_X.fit_transform(X[[col]]).ravel()
-        elif not pd.api.types.is_numeric_dtype(X[col]): # Check if any non-numeric remains
+        elif not pd.api.types.is_numeric_dtype(X[col]): 
             if show:
                 st.error(f"❌ ERROR: Kolom '{col}' di X bukan tipe numerik setelah semua preprocessing.")
             raise TypeError(f"Kolom '{col}' di X bukan tipe numerik.")
@@ -174,7 +174,7 @@ def preprocess_data(df, show=True):
         imputer_final_y = SimpleImputer(strategy='most_frequent')
         y = imputer_final_y.fit_transform(y.to_frame()).ravel()
         y = pd.Series(y, name='NObeyesdad') 
-    elif not pd.api.types.is_numeric_dtype(y): # Check if y is non-numeric
+    elif not pd.api.types.is_numeric_dtype(y): 
         if show:
             st.error("❌ ERROR: Target y bukan tipe numerik setelah semua preprocessing.")
         raise TypeError("Target y bukan tipe numerik.")
@@ -211,13 +211,16 @@ def preprocess_data(df, show=True):
     X_scaled = scaler.fit_transform(X_final) 
     X_processed = pd.DataFrame(X_scaled, columns=X_final.columns)
 
-    # --- START OF NEW CRITICAL FINAL CONVERSION TO NUMPY ARRAYS FOR SMOTE ---
+    # --- START OF NEW CRITICAL FINAL CONVERSION TO PURE NUMPY ARRAYS FOR SMOTE ---
     if show:
-        st.markdown("### 🔍 Final Konversi ke NumPy Array untuk SMOTE")
+        st.markdown("### 🔍 Final Konversi ke NumPy Array Murni untuk SMOTE")
 
-    # Konversi X_processed ke numpy array float64
+    # Konversi X_processed ke numpy array float64 (pastikan 2D)
     try:
-        X_smote = X_processed.to_numpy(dtype=np.float64, copy=True)
+        X_smote = X_processed.values.astype(np.float64) 
+        if X_smote.ndim == 1: 
+            X_smote = X_smote.reshape(-1, 1)
+        if show: st.write(f"X_smote shape: {X_smote.shape}, dtype: {X_smote.dtype}")
     except Exception as e:
         if show:
             st.error(f"❌ ERROR: Gagal mengkonversi X_processed ke numpy.ndarray (float64) untuk SMOTE. Detail: {e}")
@@ -226,9 +229,12 @@ def preprocess_data(df, show=True):
             st.write("X_processed infs:", X_processed.isin([np.inf, -np.inf]).sum().sum())
         raise ValueError(f"Final conversion of X for SMOTE failed: {e}")
 
-    # Konversi y_final ke numpy array int64
+    # Konversi y_final ke numpy array int64 (pastikan 1D)
     try:
-        y_smote = y_final.to_numpy(dtype=np.int64, copy=True)
+        y_smote = y_final.values.astype(np.int64) 
+        if y_smote.ndim > 1: 
+            y_smote = y_smote.ravel() 
+        if show: st.write(f"y_smote shape: {y_smote.shape}, dtype: {y_smote.dtype}")
     except Exception as e:
         if show:
             st.error(f"❌ ERROR: Gagal mengkonversi y_final ke numpy.ndarray (int64) untuk SMOTE. Detail: {e}")
@@ -245,7 +251,7 @@ def preprocess_data(df, show=True):
         if show: st.error("❌ FATAL ERROR: NaN atau Inf ditemukan di y_smote tepat sebelum SMOTE.")
         raise ValueError("NaNs or Infs found in y_smote immediately before SMOTE.")
 
-    # --- END OF NEW CRITICAL FINAL CONVERSION TO NUMPY ARRAYS ---
+    # --- END OF NEW CRITICAL FINAL CONVERSION TO PURE NUMPY ARRAYS ---
 
 
     if show:
@@ -253,13 +259,13 @@ def preprocess_data(df, show=True):
         df_for_corr_viz = X_processed.copy()
         df_for_corr_viz['NObeyesdad'] = y_final 
         
-        fig = plt.figure(figsize=(16, 12))
-        sns.heatmap(df_for_corr_viz.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8})
+        fig_corr, ax_corr = plt.subplots(figsize=(16, 12))
+        sns.heatmap(df_for_corr_viz.corr(), annot=True, fmt=".2f", cmap='coolwarm', linewidths=0.5, cbar_kws={"shrink": 0.8}, ax=ax_corr)
         plt.title("Heatmap Korelasi antar Fitur", fontsize=16)
         plt.xticks(rotation=45, ha='right', fontsize=10)
         plt.yticks(rotation=0, fontsize=10)
         plt.tight_layout()
-        st.pyplot(fig)
+        st.pyplot(fig_corr)
 
 
     if show:
@@ -267,10 +273,10 @@ def preprocess_data(df, show=True):
         col1, col2 = st.columns(2)
         with col1:
             st.write("Sebelum SMOTE")
-            fig = plt.figure(figsize=(5, 4))
-            sns.countplot(x=y_final) 
+            fig_before_smote, ax_before_smote = plt.subplots(figsize=(5, 4))
+            sns.countplot(x=y_final, ax=ax_before_smote) 
             plt.title("Distribusi Kelas Sebelum SMOTE")
-            st.pyplot(fig)
+            st.pyplot(fig_before_smote)
 
     smote = SMOTE(random_state=42)
     X_resampled, y_resampled = smote.fit_resample(X_smote, y_smote)
@@ -278,10 +284,10 @@ def preprocess_data(df, show=True):
     if show:
         with col2:
             st.write("Setelah SMOTE")
-            fig = plt.figure(figsize=(5, 4))
-            sns.countplot(x=y_resampled)
+            fig_after_smote, ax_after_smote = plt.subplots(figsize=(5, 4))
+            sns.countplot(x=y_resampled, ax=ax_after_smote)
             plt.title("Distribusi Kelas Setelah SMOTE")
-            st.pyplot(fig)
+            st.pyplot(fig_after_smote)
 
     X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
 
